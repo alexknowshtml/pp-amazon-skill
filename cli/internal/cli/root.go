@@ -154,6 +154,7 @@ already in your local order history. Multi-account via --profile.
 		newReorderLastCmd(),
 		newCheckoutCmd(),
 		newDefaultsCmd(),
+		newSearchCmd(),
 	)
 	return root
 }

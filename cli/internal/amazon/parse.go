@@ -7,6 +7,87 @@ import (
 	"strings"
 )
 
+// parseSearchResultsHTML extracts SearchResults from a /s?k= response.
+// Amazon has no clean search API; this is best-effort regex, mirroring the
+// cart parser's approach. Results are identified by data-component-type=
+// "s-search-result" divs; each carries a data-asin attribute.
+func parseSearchResultsHTML(body string) []SearchResult {
+	asinMatches := searchAsinRe.FindAllStringIndex(body, -1)
+	if len(asinMatches) == 0 {
+		return nil
+	}
+	var results []SearchResult
+	seen := make(map[string]bool)
+	for _, pos := range asinMatches {
+		// Confirm this data-asin lives on a search-result div by checking
+		// ±600 bytes for the component-type marker (they share an opening tag).
+		lo := pos[0] - 600
+		if lo < 0 {
+			lo = 0
+		}
+		hi := pos[1] + 600
+		if hi > len(body) {
+			hi = len(body)
+		}
+		if !strings.Contains(body[lo:hi], `data-component-type="s-search-result"`) {
+			continue
+		}
+		asinMatch := searchAsinRe.FindStringSubmatch(body[pos[0]:pos[1]+1])
+		if asinMatch == nil {
+			continue
+		}
+		asin := asinMatch[1]
+		if seen[asin] {
+			continue
+		}
+		seen[asin] = true
+		// Grab a chunk starting at the ASIN position; 5 KB covers one result item.
+		end := pos[0] + 5000
+		if end > len(body) {
+			end = len(body)
+		}
+		chunk := body[pos[0]:end]
+		title := extractSearchTitle(chunk)
+		if title == "" {
+			continue
+		}
+		results = append(results, SearchResult{
+			ASIN:          asin,
+			Title:         title,
+			Price:         extractSearchPrice(chunk),
+			PrimeEligible: strings.Contains(chunk, "a-icon-prime") || strings.Contains(chunk, `aria-label="Amazon Prime"`),
+		})
+	}
+	return results
+}
+
+var (
+	searchAsinRe  = regexp.MustCompile(`\bdata-asin="([A-Z0-9]{10,})"`)
+	searchH2Re    = regexp.MustCompile(`(?s)<h2\b[^>]*>(.*?)</h2>`)
+	searchSpanRe  = regexp.MustCompile(`<span[^>]*>([^<]{5,})</span>`)
+	searchPriceRe = regexp.MustCompile(`<span[^>]+class="[^"]*a-offscreen[^"]*"[^>]*>([^<]+)</span>`)
+)
+
+func extractSearchTitle(chunk string) string {
+	h2 := searchH2Re.FindStringSubmatch(chunk)
+	if h2 == nil {
+		return ""
+	}
+	sp := searchSpanRe.FindStringSubmatch(h2[1])
+	if sp == nil {
+		return ""
+	}
+	return html2text(strings.TrimSpace(sp[1]))
+}
+
+func extractSearchPrice(chunk string) string {
+	m := searchPriceRe.FindStringSubmatch(chunk)
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(m[1])
+}
+
 // parseCartHTML extracts CartLines from a /gp/cart/view.html response.
 //
 // Amazon's cart page is HTML-only; we read the per-line data attributes:

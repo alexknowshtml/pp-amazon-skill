@@ -59,6 +59,14 @@ type CartLine struct {
 	PriceCents int64  `json:"price_cents,omitempty"`
 }
 
+// SearchResult is one item from a /s?k= search page.
+type SearchResult struct {
+	ASIN          string `json:"asin"`
+	Title         string `json:"title"`
+	Price         string `json:"price,omitempty"`
+	PrimeEligible bool   `json:"prime_eligible"`
+}
+
 // New returns a Client wired to the given profile and session.
 func New(profile config.Profile, sess *auth.Session) (*Client, error) {
 	if profile.MarketplaceBaseURL == "" {
@@ -279,6 +287,23 @@ func (c *Client) PlaceOrder(ctx context.Context, confirm bool) (CheckoutResult, 
 		return CheckoutResult{OrderID: id, Confirmed: true}, nil
 	}
 	return CheckoutResult{Confirmed: false, StatusNote: "POSTed but could not parse an order ID from response"}, nil
+}
+
+// SearchProducts GETs /s?k=<query> and returns parsed results from the first page.
+// This hits Amazon's main search surface, which is more aggressively bot-guarded
+// than cart/checkout. Failures surface via the existing ErrRobotCheck path.
+func (c *Client) SearchProducts(ctx context.Context, query string) ([]SearchResult, error) {
+	path := "/s?k=" + url.QueryEscape(query)
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Referer", c.baseURL()+"/")
+	_, body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	return parseSearchResultsHTML(string(body)), nil
 }
 
 // MarshalSession is a debug helper used by `doctor --json`.
