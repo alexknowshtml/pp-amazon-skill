@@ -255,7 +255,7 @@ func (s *Session) CookieJar(base string) (http.CookieJar, error) {
 	for _, c := range s.Cookies {
 		hcookies = append(hcookies, &http.Cookie{
 			Name:     c.Name,
-			Value:    c.Value,
+			Value:    strings.Trim(c.Value, "\""),
 			Domain:   c.Domain,
 			Path:     c.Path,
 			Expires:  c.Expires,

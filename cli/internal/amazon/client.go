@@ -61,10 +61,13 @@ type CartLine struct {
 
 // SearchResult is one item from a /s?k= search page.
 type SearchResult struct {
-	ASIN          string `json:"asin"`
-	Title         string `json:"title"`
-	Price         string `json:"price,omitempty"`
-	PrimeEligible bool   `json:"prime_eligible"`
+	ASIN          string  `json:"asin"`
+	Title         string  `json:"title"`
+	Price         string  `json:"price,omitempty"`
+	UnitPrice     string  `json:"unit_price,omitempty"`
+	Stars         float64 `json:"stars,omitempty"`
+	ReviewCount   int     `json:"review_count,omitempty"`
+	PrimeEligible bool    `json:"prime_eligible"`
 }
 
 // New returns a Client wired to the given profile and session.
@@ -294,8 +297,11 @@ func (c *Client) PlaceOrder(ctx context.Context, confirm bool) (CheckoutResult, 
 // than cart/checkout. Failures surface via the existing ErrRobotCheck path.
 // Warnings are non-nil when the parser detects a structural mismatch (e.g.
 // price fields empty across all results); each warning carries a repair instruction.
-func (c *Client) SearchProducts(ctx context.Context, query string) ([]SearchResult, []ParseWarning, error) {
+func (c *Client) SearchProducts(ctx context.Context, query, sort string) ([]SearchResult, []ParseWarning, error) {
 	path := "/s?k=" + url.QueryEscape(query)
+	if sort != "" {
+		path += "&s=" + url.QueryEscape(sort)
+	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, nil, err

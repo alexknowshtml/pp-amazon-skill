@@ -65,6 +65,9 @@ func parseSearchResultsHTML(body string) ([]SearchResult, []ParseWarning) {
 			ASIN:          asin,
 			Title:         title,
 			Price:         extractSearchPrice(chunk),
+			UnitPrice:     extractSearchUnitPrice(chunk),
+			Stars:         extractSearchStars(chunk),
+			ReviewCount:   extractSearchReviewCount(chunk),
 			PrimeEligible: strings.Contains(chunk, "a-icon-prime") || strings.Contains(chunk, `aria-label="Amazon Prime"`),
 		})
 	}
@@ -102,10 +105,13 @@ func diagnoseSearchResults(body string, results []SearchResult) []ParseWarning {
 }
 
 var (
-	searchAsinRe  = regexp.MustCompile(`\bdata-asin="([A-Z0-9]{10,})"`)
-	searchH2Re    = regexp.MustCompile(`(?s)<h2\b[^>]*>(.*?)</h2>`)
-	searchSpanRe  = regexp.MustCompile(`<span[^>]*>([^<]{5,})</span>`)
-	searchPriceRe = regexp.MustCompile(`<span[^>]+class="[^"]*a-offscreen[^"]*"[^>]*>([^<]+)</span>`)
+	searchAsinRe      = regexp.MustCompile(`\bdata-asin="([A-Z0-9]{10,})"`)
+	searchH2Re        = regexp.MustCompile(`(?s)<h2\b[^>]*>(.*?)</h2>`)
+	searchSpanRe      = regexp.MustCompile(`<span[^>]*>([^<]{5,})</span>`)
+	searchPriceRe     = regexp.MustCompile(`<span[^>]+class="[^"]*a-offscreen[^"]*"[^>]*>([^<]+)</span>`)
+	searchStarsRe     = regexp.MustCompile(`a-star-mini-(\d+)(?:-(\d+))?`)
+	searchReviewsRe   = regexp.MustCompile(`aria-label="([\d,]+) ratings"`)
+	searchUnitPriceRe = regexp.MustCompile(`\(\$([\d.]+)(?:</[^>]+>)?\s*/\s*([\w\s\d/]+?)\)`)
 )
 
 func extractSearchTitle(chunk string) string {
@@ -126,6 +132,40 @@ func extractSearchPrice(chunk string) string {
 		return ""
 	}
 	return strings.TrimSpace(m[1])
+}
+
+func extractSearchStars(chunk string) float64 {
+	m := searchStarsRe.FindStringSubmatch(chunk)
+	if m == nil {
+		return 0
+	}
+	whole, _ := strconv.Atoi(m[1])
+	if m[2] != "" {
+		return float64(whole) + float64(mustAtoi(m[2]))/10.0
+	}
+	return float64(whole)
+}
+
+func extractSearchReviewCount(chunk string) int {
+	m := searchReviewsRe.FindStringSubmatch(chunk)
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.ReplaceAll(m[1], ",", ""))
+	return n
+}
+
+func extractSearchUnitPrice(chunk string) string {
+	m := searchUnitPriceRe.FindStringSubmatch(chunk)
+	if m == nil {
+		return ""
+	}
+	return "$" + m[1] + " / " + strings.TrimSpace(m[2])
+}
+
+func mustAtoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }
 
 // parseCartHTML extracts CartLines from a /gp/cart/view.html response.
