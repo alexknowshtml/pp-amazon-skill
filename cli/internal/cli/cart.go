@@ -18,6 +18,7 @@ func newCartCmd() *cobra.Command {
 		Annotations: map[string]string{"mcp:read-only": "true"},
 	}
 	cmd.AddCommand(newCartShowCmd())
+	cmd.AddCommand(newCartAddAsinCmd())
 	return cmd
 }
 
