@@ -42,8 +42,15 @@ JSON output shape:
       "price": "$12.16",
       "unit_price": "$0.13 / count",
       "prime_eligible": true,
-      "stars": 4.5,
-      "review_count": 55837
+      "stars": 4.8,
+      "review_count": 55837,
+      "coupon": "Save 15%",
+      "delivery_date": "Mon, Aug 25",
+      "badge": "Amazon's Choice",
+      "sponsored": false,
+      "subscribe_and_save": true,
+      "url": "/dp/B0FN5154SV",
+      "image_url": "https://m.media-amazon.com/images/I/..."
     }
   ],
   "warnings": null

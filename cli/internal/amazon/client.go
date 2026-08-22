@@ -61,13 +61,20 @@ type CartLine struct {
 
 // SearchResult is one item from a /s?k= search page.
 type SearchResult struct {
-	ASIN          string  `json:"asin"`
-	Title         string  `json:"title"`
-	Price         string  `json:"price,omitempty"`
-	UnitPrice     string  `json:"unit_price,omitempty"`
-	Stars         float64 `json:"stars,omitempty"`
-	ReviewCount   int     `json:"review_count,omitempty"`
-	PrimeEligible bool    `json:"prime_eligible"`
+	ASIN            string  `json:"asin"`
+	Title           string  `json:"title"`
+	Price           string  `json:"price,omitempty"`
+	UnitPrice       string  `json:"unit_price,omitempty"`
+	Stars           float64 `json:"stars,omitempty"`
+	ReviewCount     int     `json:"review_count,omitempty"`
+	PrimeEligible   bool    `json:"prime_eligible"`
+	Coupon          string  `json:"coupon,omitempty"`
+	DeliveryDate    string  `json:"delivery_date,omitempty"`
+	Badge           string  `json:"badge,omitempty"`
+	Sponsored       bool    `json:"sponsored,omitempty"`
+	SubscribeAndSave bool   `json:"subscribe_and_save,omitempty"`
+	URL             string  `json:"url,omitempty"`
+	ImageURL        string  `json:"image_url,omitempty"`
 }
 
 // New returns a Client wired to the given profile and session.

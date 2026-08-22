@@ -62,13 +62,20 @@ func parseSearchResultsHTML(body string) ([]SearchResult, []ParseWarning) {
 			continue
 		}
 		results = append(results, SearchResult{
-			ASIN:          asin,
-			Title:         title,
-			Price:         extractSearchPrice(chunk),
-			UnitPrice:     extractSearchUnitPrice(chunk),
-			Stars:         extractSearchStars(chunk),
-			ReviewCount:   extractSearchReviewCount(chunk),
-			PrimeEligible: strings.Contains(chunk, "a-icon-prime") || strings.Contains(chunk, `aria-label="Amazon Prime"`),
+			ASIN:             asin,
+			Title:            title,
+			Price:            extractSearchPrice(chunk),
+			UnitPrice:        extractSearchUnitPrice(chunk),
+			Stars:            extractSearchStars(chunk),
+			ReviewCount:      extractSearchReviewCount(chunk),
+			PrimeEligible:    strings.Contains(chunk, "a-icon-prime") || strings.Contains(chunk, `aria-label="Amazon Prime"`),
+			Coupon:           extractSearchCoupon(chunk),
+			DeliveryDate:     extractSearchDelivery(chunk),
+			Badge:            extractSearchBadge(chunk),
+			Sponsored:        strings.Contains(body[lo:hi], `data-component-type="sp-sponsored-result"`),
+			SubscribeAndSave: strings.Contains(chunk, "Subscribe & Save"),
+			URL:              extractSearchURL(chunk),
+			ImageURL:         extractSearchImage(chunk),
 		})
 	}
 	return results, diagnoseSearchResults(body, results)
@@ -101,6 +108,19 @@ func diagnoseSearchResults(body string, results []SearchResult) []ParseWarning {
 			Fix:     `searchPriceRe in parse.go matches <span class="a-offscreen">. Verify this class exists within 15000 chars of each data-asin marker. If Amazon moved the price further or changed the class name, update the chunk size constant (15000) or the regex in parse.go.`,
 		})
 	}
+	emptyStars := 0
+	for _, r := range results {
+		if r.Stars == 0 {
+			emptyStars++
+		}
+	}
+	if emptyStars == len(results) {
+		warnings = append(warnings, ParseWarning{
+			Field:   "stars",
+			Symptom: "all results have zero stars",
+			Fix:     `parse.go tries three star patterns in order: aria-label="X.X out of 5 stars", ">X.X out of 5 stars<" span text, and a-star-mini-N-N CSS class. If all fail, Amazon likely moved the rating outside the 15000-char chunk from the ASIN marker. Dump raw HTML and measure the distance from data-asin to the first star signal, then update the chunk size constant in parseSearchResultsHTML.`,
+		})
+	}
 	return warnings
 }
 
@@ -109,9 +129,16 @@ var (
 	searchH2Re        = regexp.MustCompile(`(?s)<h2\b[^>]*>(.*?)</h2>`)
 	searchSpanRe      = regexp.MustCompile(`<span[^>]*>([^<]{5,})</span>`)
 	searchPriceRe     = regexp.MustCompile(`<span[^>]+class="[^"]*a-offscreen[^"]*"[^>]*>([^<]+)</span>`)
-	searchStarsRe     = regexp.MustCompile(`a-star-mini-(\d+)(?:-(\d+))?`)
+	searchStarsAriaRe = regexp.MustCompile(`aria-label="([\d.]+) out of 5 stars"`)
+	searchStarsTextRe = regexp.MustCompile(`>([\d.]+) out of 5 stars<`)
+	searchStarsMiniRe = regexp.MustCompile(`a-star-mini-(\d+)(?:-(\d+))?`)
 	searchReviewsRe   = regexp.MustCompile(`aria-label="([\d,]+) ratings"`)
 	searchUnitPriceRe = regexp.MustCompile(`\(\$([\d.]+)(?:</[^>]+>)?\s*/\s*([\w\s\d/]+?)\)`)
+	searchCouponRe    = regexp.MustCompile(`(?i)Save\s+([\d]+%|\$[\d.]+)`)
+	searchDeliveryRe  = regexp.MustCompile(`(?i)(?:Get it|FREE delivery)[^<]{0,80}?([A-Z][a-z]{2},\s+[A-Z][a-z]{2}\s+\d+)`)
+	searchBadgeRe     = regexp.MustCompile(`(?i)<span[^>]+class="[^"]*a-badge-label[^"]*"[^>]*>([^<]+)<`)
+	searchURLRe       = regexp.MustCompile(`href="(/[^"]+/dp/[A-Z0-9]{10}[^"]*?)"`)
+	searchImageRe     = regexp.MustCompile(`<img[^>]+class="[^"]*s-image[^"]*"[^>]+src="([^"]+)"`)
 )
 
 func extractSearchTitle(chunk string) string {
@@ -135,15 +162,28 @@ func extractSearchPrice(chunk string) string {
 }
 
 func extractSearchStars(chunk string) float64 {
-	m := searchStarsRe.FindStringSubmatch(chunk)
-	if m == nil {
-		return 0
+	// Try precise decimal from aria-label on icon element.
+	if m := searchStarsAriaRe.FindStringSubmatch(chunk); m != nil {
+		if f, err := strconv.ParseFloat(m[1], 64); err == nil {
+			return f
+		}
 	}
-	whole, _ := strconv.Atoi(m[1])
-	if m[2] != "" {
-		return float64(whole) + float64(mustAtoi(m[2]))/10.0
+	// Try span text content ("4.3 out of 5 stars").
+	if m := searchStarsTextRe.FindStringSubmatch(chunk); m != nil {
+		if f, err := strconv.ParseFloat(m[1], 64); err == nil {
+			return f
+		}
 	}
-	return float64(whole)
+	// Fall back to CSS class (rounds to nearest 0.5).
+	if m := searchStarsMiniRe.FindStringSubmatch(chunk); m != nil {
+		whole, _ := strconv.Atoi(m[1])
+		if m[2] != "" {
+			frac, _ := strconv.Atoi(m[2])
+			return float64(whole) + float64(frac)/10.0
+		}
+		return float64(whole)
+	}
+	return 0
 }
 
 func extractSearchReviewCount(chunk string) int {
@@ -163,9 +203,49 @@ func extractSearchUnitPrice(chunk string) string {
 	return "$" + m[1] + " / " + strings.TrimSpace(m[2])
 }
 
-func mustAtoi(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
+func extractSearchCoupon(chunk string) string {
+	m := searchCouponRe.FindStringSubmatch(chunk)
+	if m == nil {
+		return ""
+	}
+	return "Save " + m[1]
+}
+
+func extractSearchDelivery(chunk string) string {
+	m := searchDeliveryRe.FindStringSubmatch(chunk)
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(m[1])
+}
+
+func extractSearchBadge(chunk string) string {
+	m := searchBadgeRe.FindStringSubmatch(chunk)
+	if m == nil {
+		return ""
+	}
+	return html2text(strings.TrimSpace(m[1]))
+}
+
+func extractSearchURL(chunk string) string {
+	m := searchURLRe.FindStringSubmatch(chunk)
+	if m == nil {
+		return ""
+	}
+	parts := strings.Split(m[1], "/dp/")
+	if len(parts) < 2 {
+		return m[1]
+	}
+	asin := strings.Split(parts[1], "/")[0]
+	return "/dp/" + asin
+}
+
+func extractSearchImage(chunk string) string {
+	m := searchImageRe.FindStringSubmatch(chunk)
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 // parseCartHTML extracts CartLines from a /gp/cart/view.html response.

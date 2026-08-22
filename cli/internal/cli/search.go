@@ -79,7 +79,7 @@ Pipe results into 'add' flows or use --json to inspect ASINs for scripting.`,
 				return nil
 			}
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "ASIN\tPRIME\tPRICE\tUNIT\t⭐\tREVIEWS\tTITLE")
+			fmt.Fprintln(tw, "ASIN\tPRIME\t⭐\tREVIEWS\tPRICE\tUNIT\tTITLE")
 			for _, r := range results {
 				prime := " "
 				if r.PrimeEligible {
@@ -93,8 +93,18 @@ Pipe results into 'add' flows or use --json to inspect ASINs for scripting.`,
 				if r.ReviewCount > 0 {
 					reviews = fmt.Sprintf("%d", r.ReviewCount)
 				}
+				title := truncate(r.Title, 45)
+				if r.Badge != "" {
+					title += " [" + r.Badge + "]"
+				}
+				if r.Coupon != "" {
+					title += " 🏷 " + r.Coupon
+				}
+				if r.Sponsored {
+					title += " [Ad]"
+				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					r.ASIN, prime, r.Price, r.UnitPrice, stars, reviews, truncate(r.Title, 50),
+					r.ASIN, prime, stars, reviews, r.Price, r.UnitPrice, title,
 				)
 			}
 			return tw.Flush()
