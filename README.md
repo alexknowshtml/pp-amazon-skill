@@ -37,27 +37,29 @@ JSON output shape:
 {
   "results": [
     {
-      "asin": "B0FN5154SV",
-      "title": "Sparkle Tear-A-Square Paper Towels, 12 Double Rolls",
-      "price": "$12.16",
-      "unit_price": "$0.13 / count",
+      "asin": "B0FX5X647R",
+      "title": "Dawn Ultra Dish Soap Refill Jug, Original Blue, 51.5 oz",
+      "price": "$7.78",
       "prime_eligible": true,
       "stars": 4.8,
-      "review_count": 55837,
+      "review_count": 123137,
       "coupon": "Save 15%",
-      "delivery_date": "Mon, Aug 25",
       "badge": "Amazon's Choice",
       "sponsored": false,
       "subscribe_and_save": true,
-      "url": "/dp/B0FN5154SV",
-      "image_url": "https://m.media-amazon.com/images/I/..."
+      "url": "/dp/B0FX5X647R",
+      "image_url": "https://m.media-amazon.com/images/I/71uOsJVS5RL._AC_UL320_.jpg"
     }
   ],
   "warnings": null
 }
 ```
 
-`warnings` is non-null when the parser detects a structural mismatch (e.g. all prices empty). Each warning has `field`, `symptom`, and `fix` — a self-contained repair instruction the agent can act on directly.
+`warnings` is non-null when the parser detects a structural mismatch or Amazon returns an unrecognized page. Each warning has `field`, `symptom`, and `fix` — a self-contained repair or retry instruction the agent can act on directly.
+
+**Field availability:** `price`, `stars`, `review_count`, `prime_eligible`, `url`, and `image_url` reliably populate. `coupon`, `badge`, `delivery_date`, `sponsored`, and `subscribe_and_save` appear when present on the result card. `unit_price` is in the schema but not currently populated — Amazon renders per-unit pricing via JavaScript, not static HTML.
+
+**Broad queries:** Single-word commodity searches like `coffee` or `soap` sometimes cause Amazon to serve a category landing page instead of standard search results. The `warnings` array will include a `fix` that says to retry with a more specific query (e.g. `coffee pods k-cup` or `dish soap refill`).
 
 ## Requirements
 

@@ -2,6 +2,7 @@ package amazon
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -86,11 +87,31 @@ func parseSearchResultsHTML(body string) ([]SearchResult, []ParseWarning) {
 func diagnoseSearchResults(body string, results []SearchResult) []ParseWarning {
 	var warnings []ParseWarning
 	if len(results) == 0 {
-		if strings.Contains(body, `data-component-type="s-search-result"`) {
+		lower := strings.ToLower(body[:min(4096, len(body))])
+		switch {
+		case strings.Contains(body, `data-component-type="s-search-result"`):
 			warnings = append(warnings, ParseWarning{
 				Field:   "results",
 				Symptom: "page contains s-search-result elements but zero results parsed",
-				Fix:     `searchAsinRe in parse.go matches \bdata-asin="([A-Z0-9]{10,})". Verify data-asin still appears within 600 bytes of data-component-type="s-search-result" on the same div. If Amazon renamed the attribute or component type, update both constants. Run: amazon-pp-cli search '<query>' (with debug build) to dump raw HTML.`,
+				Fix:     `searchAsinRe in parse.go matches \bdata-asin="([A-Z0-9]{10,})". Verify data-asin still appears within 600 bytes of data-component-type="s-search-result" on the same div. If Amazon renamed the attribute or component type, update both constants.`,
+			})
+		case strings.Contains(lower, "type the characters") || strings.Contains(lower, "enter the characters") || strings.Contains(lower, "sorry, we just need to make sure"):
+			warnings = append(warnings, ParseWarning{
+				Field:   "results",
+				Symptom: "Amazon served a CAPTCHA page — bot detection triggered",
+				Fix:     "Open amazon.com in your browser, solve the CAPTCHA, then retry. Do not retry automatically.",
+			})
+		case len(body) < 5000:
+			warnings = append(warnings, ParseWarning{
+				Field:   "results",
+				Symptom: fmt.Sprintf("response body unexpectedly short (%d bytes) — likely a redirect or error page", len(body)),
+				Fix:     "Run doctor to verify session health. Re-paste cookies if expired.",
+			})
+		default:
+			warnings = append(warnings, ParseWarning{
+				Field:   "results",
+				Symptom: "Amazon returned a page with no recognizable search result elements",
+				Fix:     "Amazon may be serving a category landing page, editorial page, or unrecognized bot-detection variant for this query. Try a more specific query (e.g. 'coffee pods k-cup' instead of 'coffee'). If the issue persists across queries, check session health with doctor.",
 			})
 		}
 		return warnings
