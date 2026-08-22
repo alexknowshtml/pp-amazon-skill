@@ -41,8 +41,8 @@ func parseSearchResultsHTML(body string) []SearchResult {
 			continue
 		}
 		seen[asin] = true
-		// Grab a chunk starting at the ASIN position; 5 KB covers one result item.
-		end := pos[0] + 5000
+		// Grab a chunk starting at the ASIN position; 15 KB covers price + Prime badge.
+		end := pos[0] + 15000
 		if end > len(body) {
 			end = len(body)
 		}
