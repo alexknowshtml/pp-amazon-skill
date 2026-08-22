@@ -1,8 +1,8 @@
-# pp-amazon — Amazon repurchase CLI + Claude Code skill
+# pp-amazon — Amazon CLI + Claude Code skill
 
-A Go CLI + Playwright helper that lets a Claude Code agent reorder previously-purchased Amazon items, with explicit confirmation gates before any money moves.
+A Go CLI + Playwright helper that lets a Claude Code agent order Amazon items — either by repurchasing from history or by searching for something new — with explicit confirmation gates before any money moves.
 
-**Repurchase-only**: refuses to add anything the user hasn't bought before. **Full checkout via headless Chromium** so Amazon doesn't see static-POST automation. **Multi-account** via profiles. **Real money — no sandbox.** Read [SKILL.md](SKILL.md) before you let an agent loose with this.
+**History-first, search-capable**: prefers items from purchase history (exact match → add); falls back to live `/s?k=` search when an item has never been ordered. **Full checkout via headless Chromium** so Amazon doesn't see static-POST automation. **Multi-account** via profiles. **Real money — no sandbox.** Read [SKILL.md](SKILL.md) before you let an agent loose with this.
 
 ## What you get
 
@@ -10,13 +10,54 @@ A Go CLI + Playwright helper that lets a Claude Code agent reorder previously-pu
 - `amazon-checkout.mjs` — Playwright helper for cart-show / add-to-cart / checkout / history-sync
 - `SKILL.md` — the Claude Code skill file (drop into `~/.claude/skills/pp-amazon/`)
 
+## CLI commands
+
+```
+amazon-pp-cli add '<item>'          # repurchase from history (strict match required)
+amazon-pp-cli search '<query>'      # live Amazon search, returns ASIN + price + stars + reviews
+amazon-pp-cli cart view             # inspect current cart
+amazon-pp-cli cart checkout --yes   # place the order
+amazon-pp-cli history search '...'  # full-text search local order history
+amazon-pp-cli history sync          # refresh history from Amazon
+amazon-pp-cli doctor                # check session health
+amazon-pp-cli profiles list         # show configured accounts
+```
+
+### search flags
+
+```
+--limit N          Max results (default 10)
+--sort             price-asc | price-desc | review | new (default: relevance)
+--json             Machine-readable output with results + warnings array
+--profile <name>   Profile to use
+```
+
+JSON output shape:
+```json
+{
+  "results": [
+    {
+      "asin": "B0FN5154SV",
+      "title": "Sparkle Tear-A-Square Paper Towels, 12 Double Rolls",
+      "price": "$12.16",
+      "unit_price": "$0.13 / count",
+      "prime_eligible": true,
+      "stars": 4.5,
+      "review_count": 55837
+    }
+  ],
+  "warnings": null
+}
+```
+
+`warnings` is non-null when the parser detects a structural mismatch (e.g. all prices empty). Each warning has `field`, `symptom`, and `fix` — a self-contained repair instruction the agent can act on directly.
+
 ## Requirements
 
-- macOS (tested on Apple Silicon) or Linux x86_64/arm64
 - Go 1.26.3 or newer ([go.dev/dl](https://go.dev/dl/))
 - Node 22+ and npm
-- Chromium (Playwright will download one on first run; or supply your own via `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`)
-- A logged-in amazon.com session in Safari/Chrome (for copying the Cookie header)
+- Chromium (Playwright downloads one on first run; or supply via `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`)
+- A logged-in amazon.com session in Safari/Chrome
 
 ## Install (5 minutes)
 
@@ -25,90 +66,77 @@ A Go CLI + Playwright helper that lets a Claude Code agent reorder previously-pu
 ./install.sh
 
 # 2. Create a profile and paste your Amazon Cookie header.
-amazon-pp-cli profiles add personal --label "Personal account"
-amazon-pp-cli --profile personal auth paste
+amazon-pp-cli profiles add indyhall-biz --label "Indy Hall Business"
+amazon-pp-cli --profile indyhall-biz auth paste
 # (paste your Cookie header from DevTools, press Ctrl+D)
 
 # 3. Verify the session reaches Amazon.
-amazon-pp-cli --profile personal doctor
-# Expected: amazon_reached: true
+amazon-pp-cli --profile indyhall-biz doctor
 
 # 4. Sync your order history.
-amazon-pp-cli --profile personal history sync
-# Walks /your-orders for current year + previous 2 years.
+amazon-pp-cli --profile indyhall-biz history sync
 
-# 5. Tell the CLI your default card last-4 (Amazon's cart page doesn't reliably expose it).
-amazon-pp-cli --profile personal defaults set --card-last4 NNNN --card-label "Visa"
+# 5. Set your default card last-4.
+amazon-pp-cli --profile indyhall-biz defaults set --card-last4 NNNN --card-label "Visa"
 
 # 6. Try a dry-run add (no cart write).
-amazon-pp-cli --profile personal add 'paper towels' --dry-run --json
-```
+amazon-pp-cli --profile indyhall-biz add 'paper towels' --dry-run --json
 
-The skill is now installed at `~/.claude/skills/pp-amazon/`. Any Claude Code agent running with that skill loaded can reorder via natural language.
+# 7. Try a live search.
+amazon-pp-cli --profile indyhall-biz search 'hand soap' --limit 5
+```
 
 ## Getting the Cookie header
 
 1. Open amazon.com in your browser (must be logged in)
-2. Open DevTools (Cmd+Option+I on macOS)
-3. Network tab → click any request → Headers → Request Headers → copy the entire `Cookie:` value
-4. Paste into `amazon-pp-cli --profile <name> auth paste`
+2. DevTools → Network → click any request → Headers → copy the entire `Cookie:` value
+3. Paste into `amazon-pp-cli --profile <name> auth paste`
 
-Cookies expire / get challenged periodically (Amazon enforces a 15-minute "max auth age" on order history and checkout). If you start seeing exit 9 (`manual_required`) errors, re-paste your Cookie header.
-
-## Multi-account setup
-
-```bash
-amazon-pp-cli profiles add personal --label "Personal"
-amazon-pp-cli profiles add work --label "Work (Amazon Business)"
-
-amazon-pp-cli --profile personal auth paste   # paste personal cookies
-amazon-pp-cli --profile work auth paste       # paste work cookies (sign out + sign in first!)
-
-amazon-pp-cli --profile personal history sync
-amazon-pp-cli --profile work history sync
-```
-
-**Important**: Amazon's `session-id` cookie is browser-bound, not account-bound. If you paste cookies from a Safari session that was recently in a different account, the dumper may return the wrong account's orders. After switching accounts, refresh the page so all cookies update, then paste.
+Cookies expire periodically. If you see exit 9 (`manual_required`), re-paste.
 
 ## Skill flow (what the agent does)
 
-When you say "order more paper towels":
+**Repurchase (item in history):**
+1. `add '<item>' --dry-run` → confirms strict match + last purchase date
+2. You confirm
+3. `add '<item>'` → Playwright clicks Add to Cart, verifies qty delta
+4. `cart view` → shows all line items + card last-4
+5. You confirm
+6. `cart checkout --yes` → Playwright places the order, returns order ID
 
-1. Agent asks which profile (if unclear)
-2. Agent runs `add 'paper towels' --dry-run` → shows you the matched item + last purchase date
-3. You say "yep"
-4. Agent runs `add 'paper towels'` → drives Playwright to the product page, clicks Add to Cart, verifies the item landed in the active cart by qty delta
-5. Agent runs `cart show` → lists EVERY line item (warns about pre-existing items)
-6. Agent asks for placement confirmation, including the card last-4
-7. You say "yes, place it"
-8. Agent runs `checkout --yes` → drives Playwright through the full checkout flow, returns the order ID
-
-If any step hits a CAPTCHA or sign-in gate, the helper exits 9 with a deeplink. The agent hands you the deeplink — you tap it in Safari, finish the action there.
+**Discovery (item not in history):**
+1. `history search '<item>'` returns nothing useful
+2. `search '<item>' --json` → live Amazon results with price, stars, review count, unit price
+3. Agent presents numbered list, you pick one by ASIN or number
+4. Agent treats your selection as a strict match and continues from step 3 above
 
 ## Honest caveats
 
-- **No upstream API.** This scrapes amazon.com via Playwright. Amazon changes their DOM regularly. When selectors break, the helper now exits 7 with the actual stderr reason (e.g. "no proceed-to-checkout button found"). Fix the selector and rebuild.
-- **CAPTCHAs are unavoidable.** Amazon's anti-bot is aggressive on the checkout endpoint. The helper's stealth shims help but don't eliminate. The graceful-fallback is the exit-9 deeplink path.
-- **Loose matches are a real risk.** `match_quality=loose` means only some query tokens hit the title. The CLI requires `--allow-loose` to commit, and the skill says "ask the user to confirm the title back" before passing it. Don't let an agent rush past this.
-- **History is a SQLite snapshot.** Run `history sync` regularly so new orders are visible to repurchase resolution.
+- **No upstream API.** This scrapes amazon.com. Amazon changes their DOM regularly. When cart/checkout selectors break, the helper exits 7 with the stderr reason. When search field parsing breaks, `--json` output includes a `warnings` array with the fix. Update the regex and rebuild.
+- **Search has higher bot-detection risk.** `/s?k=` is more aggressively guarded than cart/checkout. If Amazon serves a CAPTCHA, the command returns exit 7 with `ErrRobotCheck`. Don't retry automatically — wait and try again manually.
+- **CAPTCHAs on checkout are unavoidable.** The stealth shims help but don't eliminate. Graceful fallback is the exit-9 deeplink path.
+- **Loose matches are a real risk.** `match_quality=loose` means only some query tokens matched the title. The CLI requires `--allow-loose` to commit. Don't let an agent rush past this.
+- **History is a SQLite snapshot.** Run `history sync` regularly so new orders are visible.
 
 ## Repo layout
 
 ```
 pp-amazon-skill/
-├── SKILL.md                 # The Claude Code skill (drops into ~/.claude/skills/pp-amazon/)
-├── amazon-checkout.mjs      # Playwright helper (cart-show, add-to-cart, checkout, history-sync)
+├── SKILL.md                 # Claude Code skill (drop into ~/.claude/skills/pp-amazon/)
+├── amazon-checkout.mjs      # Playwright helper (cart, add-to-cart, checkout, history-sync)
 ├── README.md                # This file
 ├── install.sh               # Build + install script
-└── package.json             # npm metadata so install.sh can `npm install playwright`
+├── package.json             # npm metadata for Playwright
+└── cli/                     # Go source
+    ├── cmd/amazon-pp-cli/   # Binary entry point
+    ├── internal/amazon/     # HTTP client, HTML parsers (cart + search)
+    ├── internal/auth/       # Cookie session management
+    ├── internal/cli/        # Cobra commands (add, search, cart, history, ...)
+    ├── internal/config/     # Profile config
+    ├── internal/history/    # Order history import
+    └── internal/store/      # SQLite store + FTS
 ```
-
-The Go CLI source itself is at `github.com/<your-fork>/printing-press-library/library/commerce/amazon/`. The installer clones / pulls it, builds with `go install`, and drops the binary at `$GOPATH/bin/amazon-pp-cli`.
-
-## Provenance
-
-Built on top of the [printing-press](https://github.com/mvanhorn/cli-printing-press) library conventions, hand-coded (not generated) because Amazon shopping has no public API spec. Structure mirrors `library/commerce/instacart/` from the same library.
 
 ## License
 
-Personal use, no warranty. If Amazon's lawyers come knocking, that's between you and them.
+Personal use, no warranty.
