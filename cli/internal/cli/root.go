@@ -155,6 +155,7 @@ already in your local order history. Multi-account via --profile.
 		newCheckoutCmd(),
 		newDefaultsCmd(),
 		newSearchCmd(),
+		newProductCmd(),
 	)
 	return root
 }

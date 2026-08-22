@@ -299,6 +299,22 @@ func (c *Client) PlaceOrder(ctx context.Context, confirm bool) (CheckoutResult, 
 	return CheckoutResult{Confirmed: false, StatusNote: "POSTed but could not parse an order ID from response"}, nil
 }
 
+// GetProductDetail GETs /dp/<asin> and returns structured product detail fields.
+// This surfaces "About this item" bullets and tech specs so the agent can determine
+// a meaningful comparison unit (e.g. sheets/roll, oz/bottle) that isn't in search results.
+func (c *Client) GetProductDetail(ctx context.Context, asin string) (ProductDetail, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/dp/"+asin, nil)
+	if err != nil {
+		return ProductDetail{}, err
+	}
+	req.Header.Set("Referer", c.baseURL()+"/")
+	_, body, err := c.do(req)
+	if err != nil {
+		return ProductDetail{}, err
+	}
+	return parseProductHTML(asin, string(body)), nil
+}
+
 // SearchProducts GETs /s?k=<query> and returns parsed results from the first page.
 // This hits Amazon's main search surface, which is more aggressively bot-guarded
 // than cart/checkout. Failures surface via the existing ErrRobotCheck path.
