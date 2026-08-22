@@ -44,7 +44,7 @@ Pipe results into 'add' flows or use --json to inspect ASINs for scripting.`,
 			if err != nil {
 				return err
 			}
-			results, err := client.SearchProducts(ctx, query)
+			results, warnings, err := client.SearchProducts(ctx, query)
 			if err != nil {
 				if errors.Is(err, amazon.ErrRobotCheck) {
 					return coded(ExitTransient, "%v", err)
@@ -58,7 +58,13 @@ Pipe results into 'add' flows or use --json to inspect ASINs for scripting.`,
 				results = results[:limit]
 			}
 			if app.JSON {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(results)
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
+					"results":  results,
+					"warnings": warnings,
+				})
+			}
+			for _, w := range warnings {
+				fmt.Fprintf(cmd.OutOrStderr(), "⚠️  parser warning [%s]: %s\n   fix: %s\n", w.Field, w.Symptom, w.Fix)
 			}
 			if len(results) == 0 {
 				fmt.Fprintln(cmd.OutOrStderr(), "no results found")

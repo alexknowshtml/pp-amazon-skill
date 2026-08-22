@@ -292,18 +292,21 @@ func (c *Client) PlaceOrder(ctx context.Context, confirm bool) (CheckoutResult, 
 // SearchProducts GETs /s?k=<query> and returns parsed results from the first page.
 // This hits Amazon's main search surface, which is more aggressively bot-guarded
 // than cart/checkout. Failures surface via the existing ErrRobotCheck path.
-func (c *Client) SearchProducts(ctx context.Context, query string) ([]SearchResult, error) {
+// Warnings are non-nil when the parser detects a structural mismatch (e.g.
+// price fields empty across all results); each warning carries a repair instruction.
+func (c *Client) SearchProducts(ctx context.Context, query string) ([]SearchResult, []ParseWarning, error) {
 	path := "/s?k=" + url.QueryEscape(query)
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("Referer", c.baseURL()+"/")
 	_, body, err := c.do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return parseSearchResultsHTML(string(body)), nil
+	results, warnings := parseSearchResultsHTML(string(body))
+	return results, warnings, nil
 }
 
 // MarshalSession is a debug helper used by `doctor --json`.

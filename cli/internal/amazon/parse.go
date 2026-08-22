@@ -7,14 +7,24 @@ import (
 	"strings"
 )
 
+// ParseWarning is emitted when the search parser detects a structural mismatch —
+// a field that should be present is missing across all results. Each warning
+// carries a self-contained fix instruction so an agent can repair the parser
+// without needing to read the raw HTML.
+type ParseWarning struct {
+	Field   string `json:"field"`
+	Symptom string `json:"symptom"`
+	Fix     string `json:"fix"`
+}
+
 // parseSearchResultsHTML extracts SearchResults from a /s?k= response.
 // Amazon has no clean search API; this is best-effort regex, mirroring the
 // cart parser's approach. Results are identified by data-component-type=
 // "s-search-result" divs; each carries a data-asin attribute.
-func parseSearchResultsHTML(body string) []SearchResult {
+func parseSearchResultsHTML(body string) ([]SearchResult, []ParseWarning) {
 	asinMatches := searchAsinRe.FindAllStringIndex(body, -1)
 	if len(asinMatches) == 0 {
-		return nil
+		return nil, diagnoseSearchResults(body, nil)
 	}
 	var results []SearchResult
 	seen := make(map[string]bool)
@@ -58,7 +68,37 @@ func parseSearchResultsHTML(body string) []SearchResult {
 			PrimeEligible: strings.Contains(chunk, "a-icon-prime") || strings.Contains(chunk, `aria-label="Amazon Prime"`),
 		})
 	}
-	return results
+	return results, diagnoseSearchResults(body, results)
+}
+
+// diagnoseSearchResults inspects parse output for structural mismatches and
+// returns self-contained repair instructions an agent can act on directly.
+func diagnoseSearchResults(body string, results []SearchResult) []ParseWarning {
+	var warnings []ParseWarning
+	if len(results) == 0 {
+		if strings.Contains(body, `data-component-type="s-search-result"`) {
+			warnings = append(warnings, ParseWarning{
+				Field:   "results",
+				Symptom: "page contains s-search-result elements but zero results parsed",
+				Fix:     `searchAsinRe in parse.go matches \bdata-asin="([A-Z0-9]{10,})". Verify data-asin still appears within 600 bytes of data-component-type="s-search-result" on the same div. If Amazon renamed the attribute or component type, update both constants. Run: amazon-pp-cli search '<query>' (with debug build) to dump raw HTML.`,
+			})
+		}
+		return warnings
+	}
+	emptyPrice := 0
+	for _, r := range results {
+		if r.Price == "" {
+			emptyPrice++
+		}
+	}
+	if emptyPrice == len(results) {
+		warnings = append(warnings, ParseWarning{
+			Field:   "price",
+			Symptom: "all results have empty price",
+			Fix:     `searchPriceRe in parse.go matches <span class="a-offscreen">. Verify this class exists within 15000 chars of each data-asin marker. If Amazon moved the price further or changed the class name, update the chunk size constant (15000) or the regex in parse.go.`,
+		})
+	}
+	return warnings
 }
 
 var (
