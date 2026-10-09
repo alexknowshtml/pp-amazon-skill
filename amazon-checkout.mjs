@@ -453,9 +453,9 @@ async function readConfirmation(page) {
 
 // Fallback when the thank-you page shows no order numbers: open order history
 // and take today's orders that contain an ASIN from the cart we just bought.
-// Order history demands a sign-in within the last hour (max_auth_age=3600),
-// so a stale session lands on /ap/signin. Report that as its own outcome
-// instead of an empty list, so the caller knows the check never ran.
+// Amazon sometimes bounces this page to /ap/signin even with working cookies
+// (seen once Oct 2026, cleared on its own within ~15 min). Report that as its
+// own outcome instead of an empty list, so the caller knows the check never ran.
 async function findPlacedOrders(page, asins) {
   if (!asins.length) return { ids: [], history_check: "no_asins" };
   try {
