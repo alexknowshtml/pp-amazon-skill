@@ -18,6 +18,7 @@
 
 import { chromium } from "playwright";
 import fs from "node:fs";
+import os from "node:os";
 
 const [, , action, cookiesPath, ...rest] = process.argv;
 const wantPlace = rest.includes("--place-order");
@@ -95,6 +96,11 @@ async function detectManualGate(page) {
     if (found) {
       return { kind: "captcha", deeplink: page.url() };
     }
+  }
+  // Expired cookies don't redirect to /ap/signin; the page renders as a guest.
+  const navGreeting = await page.$eval("#nav-link-accountList-nav-line-1", (el) => el.textContent || "").catch(() => "");
+  if (/hello,\s*sign in/i.test(navGreeting)) {
+    return { kind: "sign-in", deeplink: "https://www.amazon.com/gp/cart/view.html" };
   }
   const bodyText = (await page.textContent("body")) || "";
   if (/to discuss automated access/i.test(bodyText) ||
@@ -600,8 +606,18 @@ async function main() {
       }
     }
     if (!clicked) {
+      const shot = `${os.tmpdir()}/amazon-add-fail-${addAsin}-${Date.now()}.png`;
+      await page.screenshot({ path: shot, fullPage: false }).catch(() => {});
+      const diag = await page.evaluate(() => {
+        const t = (s) => (document.querySelector(s)?.innerText || "").replace(/\s+/g, " ").trim();
+        return {
+          title: t("#productTitle"),
+          availability: t("#availability"),
+          buyingOptions: !!document.querySelector("#buybox-see-all-buying-choices, a[title*='buying options' i]"),
+        };
+      }).catch(() => ({}));
       await browser.close();
-      transientExit(`could not find Add-to-Cart button for ${addAsin}`);
+      transientExit(`could not find Add-to-Cart button for ${addAsin} (url=${page.url()} title="${diag.title || ""}" availability="${diag.availability || ""}" buying_options=${!!diag.buyingOptions} screenshot=${shot})`);
     }
 
     await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});

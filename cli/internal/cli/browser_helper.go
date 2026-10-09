@@ -15,11 +15,14 @@ import (
 // order, taking the first that exists:
 //  1. $AMAZON_PP_BROWSER_HELPER (explicit override; useful for tests)
 //  2. /usr/local/lib/amazon-pp-cli/amazon-checkout.mjs (container install path)
-//  3. ../checkout-helper/amazon-checkout.mjs relative to this source dir (dev)
+//  3. ~/.local/lib/amazon-pp-cli/amazon-checkout.mjs (non-root install path)
 func browserHelperPath() (string, error) {
 	candidates := []string{
 		os.Getenv("AMAZON_PP_BROWSER_HELPER"),
 		"/usr/local/lib/amazon-pp-cli/amazon-checkout.mjs",
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, home+"/.local/lib/amazon-pp-cli/amazon-checkout.mjs")
 	}
 	for _, c := range candidates {
 		if c == "" {
@@ -29,7 +32,7 @@ func browserHelperPath() (string, error) {
 			return c, nil
 		}
 	}
-	return "", errors.New("amazon-checkout.mjs not found (set AMAZON_PP_BROWSER_HELPER or install to /usr/local/lib/amazon-pp-cli/)")
+	return "", errors.New("amazon-checkout.mjs not found (set AMAZON_PP_BROWSER_HELPER or install to /usr/local/lib/amazon-pp-cli/ or ~/.local/lib/amazon-pp-cli/)")
 }
 
 // BrowserResult is the JSON contract emitted by amazon-checkout.mjs on stdout.
