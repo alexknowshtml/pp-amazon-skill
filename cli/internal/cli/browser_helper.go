@@ -37,27 +37,30 @@ func browserHelperPath() (string, error) {
 
 // BrowserResult is the JSON contract emitted by amazon-checkout.mjs on stdout.
 type BrowserResult struct {
-	Status             string         `json:"status"` // ok | review_ready | placed | placed_unconfirmed | manual_required | added | add_failed
-	Kind               string         `json:"kind,omitempty"`
-	Deeplink           string         `json:"deeplink,omitempty"`
-	Stage              string         `json:"stage,omitempty"`
-	OrderID            string         `json:"order_id,omitempty"`
-	ConfirmationURL    string         `json:"confirmation_url,omitempty"`
-	ReviewURL          string         `json:"review_url,omitempty"`
-	Items              []BrowserItem  `json:"items,omitempty"`
-	Subtotal           string         `json:"subtotal,omitempty"`
-	DefaultAddress     string         `json:"default_address,omitempty"`
-	DefaultCardLast4   string         `json:"default_card_last4,omitempty"`
+	Status           string        `json:"status"` // ok | review_ready | placed | placed_unconfirmed | manual_required | added | add_failed
+	Kind             string        `json:"kind,omitempty"`
+	Deeplink         string        `json:"deeplink,omitempty"`
+	Stage            string        `json:"stage,omitempty"`
+	OrderID          string        `json:"order_id,omitempty"`
+	OrderIDs         []string      `json:"order_ids,omitempty"`        // every order from one checkout (Amazon may split it)
+	OrderIDsSource   string        `json:"order_ids_source,omitempty"` // confirmation_page | order_history
+	PurchaseID       string        `json:"purchase_id,omitempty"`      // thank-you URL purchaseId; not an order number
+	ConfirmationURL  string        `json:"confirmation_url,omitempty"`
+	ReviewURL        string        `json:"review_url,omitempty"`
+	Items            []BrowserItem `json:"items,omitempty"`
+	Subtotal         string        `json:"subtotal,omitempty"`
+	DefaultAddress   string        `json:"default_address,omitempty"`
+	DefaultCardLast4 string        `json:"default_card_last4,omitempty"`
 	// add-to-cart fields
-	ASIN              string `json:"asin,omitempty"`
-	Title             string `json:"title,omitempty"`
-	Quantity          int    `json:"quantity,omitempty"`
-	CartItems         int    `json:"cart_items,omitempty"`
-	WasAlreadyInCart  bool   `json:"was_already_in_cart,omitempty"`
-	Reason            string `json:"reason,omitempty"`
+	ASIN             string `json:"asin,omitempty"`
+	Title            string `json:"title,omitempty"`
+	Quantity         int    `json:"quantity,omitempty"`
+	CartItems        int    `json:"cart_items,omitempty"`
+	WasAlreadyInCart bool   `json:"was_already_in_cart,omitempty"`
+	Reason           string `json:"reason,omitempty"`
 	// history-sync fields
-	OrdersCount       int    `json:"orders_count,omitempty"`
-	JSONL             string `json:"jsonl,omitempty"`
+	OrdersCount int    `json:"orders_count,omitempty"`
+	JSONL       string `json:"jsonl,omitempty"`
 }
 
 type BrowserItem struct {

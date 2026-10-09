@@ -75,7 +75,9 @@ When the user says "order X" or equivalent, you MUST run this sequence:
    ```bash
    amazon-pp-cli --profile <slug> checkout --yes --json
    ```
-   On success: `status: "placed"`, `order_id`, `confirmation_url`.
+   On success: `status: "placed"`, `order_id`, `order_ids`, `confirmation_url`. Amazon can split one checkout into several orders; `order_ids` lists all of them, so report every one. `order_ids_source: "order_history"` means the thank-you page showed no numbers and they came from today's order history instead.
+
+   If `status: "placed_unconfirmed"`, the order went through but no order number was found. Check the order history before telling the user anything.
 
    **If exit 9 (`manual_required`):** Amazon flagged the place-order request. Tell the user: *"Amazon needs you to finish at <deeplink>. Items are already in your cart — just tap 'Place order' in Safari."* Don't retry — CAPTCHA will re-trigger.
 

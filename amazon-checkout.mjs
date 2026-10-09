@@ -132,12 +132,12 @@ async function readCart(page) {
     // collapse "X X" into "X" when both halves are equal.
     function dedupTitle(t) {
       if (!t) return t;
+      // Only an exact repeat counts. The old second clause matched any title
+      // with a space near its midpoint ("Mead #10 Envelopes" -> "Mead #10").
       const half = Math.floor(t.length / 2);
       const left = t.slice(0, half).trim();
       const right = t.slice(half).trim();
-      if (left.length > 5 && (left === right || `${left} ${right.slice(0, left.length)}` === t.slice(0, left.length * 2 + 1))) {
-        return left;
-      }
+      if (left.length > 5 && left === right) return left;
       return t;
     }
     const items = [];
@@ -162,10 +162,36 @@ async function readCart(page) {
     const isAfterBoundary = (el) =>
       savedBoundary && (savedBoundary.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
 
-    // Try the most-specific selector first; fall back to the broader one.
-    let rows = document.querySelectorAll('[data-name="Active Items"] .sc-list-item');
+    const ASIN_RE = /^[A-Z0-9]{10}$/;
+    const asinOf = (el) => {
+      const a = el && el.getAttribute && el.getAttribute("data-asin");
+      return a && ASIN_RE.test(a) ? a : "";
+    };
+    const asinFromHref = (href) => {
+      const m = (href || "").match(/\/(?:gp\/product|dp)\/([A-Z0-9]{10})/);
+      return m ? m[1] : "";
+    };
+
+    // Row discovery. Each active cart item is one [data-asin] element under
+    // #sc-active-cart that carries data-quantity/data-price. Only the
+    // OUTERMOST [data-asin] element counts — nested ones are add-ons,
+    // "compare similar" widgets, or recommendations rendered inside the row,
+    // and reading fields from them is how the Tork-towel title ended up
+    // paired with the envelopes ASIN (Oct 9 2026).
+    const cartRoot = document.querySelector("#sc-active-cart") || document.querySelector('[data-name="Active Items"]');
+    let rows = [];
+    if (cartRoot) {
+      rows = [...cartRoot.querySelectorAll("[data-asin]")].filter((el) => {
+        if (!asinOf(el)) return false;
+        const outer = el.parentElement && el.parentElement.closest("[data-asin]");
+        return !outer || !cartRoot.contains(outer);
+      });
+    }
     if (rows.length === 0) {
-      rows = document.querySelectorAll(".sc-list-item, .sc-list-item-content");
+      // Legacy fallback: class-based rows. .sc-list-item-content sits INSIDE
+      // .sc-list-item, so keep only the outermost match to avoid doubles.
+      rows = [...document.querySelectorAll(".sc-list-item, .sc-list-item-content")]
+        .filter((el) => !(el.parentElement && el.parentElement.closest(".sc-list-item, .sc-list-item-content")));
     }
     // Active-cart positive identification: a row only counts as an actual cart
     // item if it has at least one of the controls that ONLY active cart rows
@@ -177,9 +203,10 @@ async function readCart(page) {
       const hasQtySelect = !!row.querySelector('select[name^="quantity"], .sc-quantity-textfield, [data-feature-id="quantity"] select');
       const hasDelete = !!row.querySelector('input[data-action="delete"], [data-action="delete-active"], [aria-label*="Delete" i], [value="Delete"]');
       const hasSaveForLater = !!row.querySelector('input[data-action="save-for-later"], [data-action="save-for-later"], [aria-label*="Save for later" i], [value*="Save for later" i]');
-      return hasQtySelect || hasDelete || hasSaveForLater;
+      return hasQtySelect || hasDelete || hasSaveForLater || row.hasAttribute("data-quantity");
     }
 
+    const seen = new Set();
     rows.forEach((row) => {
       if (isAfterBoundary(row)) return;
       // Also reject if any ancestor's data-name says "Saved..."
@@ -189,59 +216,58 @@ async function readCart(page) {
         if (name && /saved/i.test(name)) return;
         p = p.parentElement;
       }
+      if (row.getAttribute("data-itemtype") && row.getAttribute("data-itemtype") !== "active") return;
       // POSITIVE check: must look like an active-cart row.
       if (!isActiveCartRow(row)) return;
-      // Prefer a single anchor text (the product link's own visible text),
-      // which is one DOM node and not subject to the visible+SR dupe.
-      const link = row.querySelector('a.a-link-normal[href*="/dp/"]');
+
+      // Every field below is read from THIS row only. No ancestor walks: an
+      // ancestor can belong to a different item (or the whole cart).
+      let asin = asinOf(row);
+      const links = [...row.querySelectorAll('a[href*="/dp/"], a[href*="/gp/product/"]')];
+      if (!asin) {
+        // No data-asin on the row: take the ASIN from the first product link.
+        asin = links.length ? asinFromHref(links[0].getAttribute("href") || links[0].href) : "";
+      }
+      if (asin && seen.has(asin)) return;
+      if (asin) seen.add(asin);
+
+      // Title: the product link that points at THIS row's ASIN, then the
+      // row's own .sc-product-title. Never a link to a different ASIN.
       let title = "";
-      if (link) {
-        title = txt(link);
-      }
+      const ownLink = links.find((a) => asinFromHref(a.getAttribute("href") || a.href) === asin);
+      if (ownLink) title = txt(ownLink.querySelector(".sc-product-title, .a-truncate-full") || ownLink);
       if (!title) {
-        const titleEl = row.querySelector('.sc-product-title, .a-truncate-cut');
-        title = dedupTitle(txt(titleEl));
-      } else {
-        title = dedupTitle(title);
+        const titleEl = row.querySelector(".sc-product-title, .a-truncate-full, .a-truncate-cut");
+        title = txt(titleEl);
       }
-      const priceEl = row.querySelector('.sc-product-price, [data-action="show-price-details"] .a-color-price');
-      const price = txt(priceEl);
-      // Qty parsing — Amazon's modern cart uses a styled a-dropdown widget,
-      // not a plain <select>. Order matters: authoritative sources (data-quantity
-      // on the row, .sc-quantity-textfield's actual value) come BEFORE
-      // .a-dropdown-prompt because S&S items show frequency ("2 months") in a
-      // separate dropdown-prompt and a naive \d+ would grab the "2".
+      title = dedupTitle(title);
+
+      const dataPrice = row.getAttribute("data-price");
+      const price = dataPrice && /^\d+(\.\d+)?$/.test(dataPrice)
+        ? `$${parseFloat(dataPrice).toFixed(2)}`
+        : txt(row.querySelector('.sc-product-price, [data-action="show-price-details"] .a-color-price'));
+
+      // Qty parsing — authoritative sources first. S&S items show frequency
+      // ("2 months") in a separate dropdown-prompt, so a naive \d+ is unsafe.
       const qty = (() => {
-        // 1. data-quantity on row or ancestor (most authoritative — set by Amazon's
-        //    cart renderer directly from the server response).
-        let p = row;
-        while (p && p !== document.body) {
-          const dq = p.getAttribute && p.getAttribute("data-quantity");
-          if (dq && /^\d+$/.test(dq)) return parseInt(dq, 10);
-          p = p.parentElement;
-        }
-        // 2. .sc-quantity-textfield / .sc-product-quantity (also authoritative)
+        const dq = row.getAttribute("data-quantity");
+        if (dq && /^\d+$/.test(dq)) return parseInt(dq, 10);
         let el = row.querySelector('.sc-quantity-textfield, .sc-product-quantity');
         if (el) {
           const v = el.value || el.innerText || el.textContent || "";
           const m = v.match(/^\s*(\d+)/);
           if (m) return parseInt(m[1], 10);
         }
-        // 3. Classic <select name="quantityN">
         el = row.querySelector('select[name^="quantity"]');
         if (el && el.value && /^\d+$/.test(el.value)) return parseInt(el.value, 10);
-        // 4. Hidden input
         el = row.querySelector('input[type="hidden"][name^="quantity"]');
         if (el && el.value && /^\d+$/.test(el.value)) return parseInt(el.value, 10);
-        // 5. Aria-label "Quantity 3" — REQUIRE the word "Quantity" so we don't
-        //    grab numbers from unrelated labels.
+        // Aria-label "Quantity 3" — REQUIRE the word "Quantity".
         const ariaEl = row.querySelector('[aria-label*="Quantity" i]');
         if (ariaEl) {
           const m = (ariaEl.getAttribute("aria-label") || "").match(/Quantity[^0-9]*(\d+)/i);
           if (m) return parseInt(m[1], 10);
         }
-        // 6. a-dropdown-prompt — ONLY if scoped to a qty feature container.
-        //    Naked .a-dropdown-prompt also catches S&S "2 months" frequency.
         el = row.querySelector('[data-feature-id="quantity"] .a-dropdown-prompt');
         if (el) {
           const m = (el.innerText || "").match(/^\s*(\d+)\s*$/);
@@ -249,20 +275,6 @@ async function readCart(page) {
         }
         return -1;
       })();
-      // ASIN: try data-asin on the row first (always present on active items),
-      // then fall back to parsing the /dp/ link (sometimes missing on
-      // freshly-added rows or specific product types).
-      let asin = "";
-      let pAsin = row;
-      while (pAsin && pAsin !== document.body) {
-        const a = pAsin.getAttribute && pAsin.getAttribute("data-asin");
-        if (a && /^[A-Z0-9]{10}$/.test(a)) { asin = a; break; }
-        pAsin = pAsin.parentElement;
-      }
-      if (!asin && link?.href) {
-        const m = link.href.match(/\/(?:gp\/product|dp)\/([A-Z0-9]{10})/);
-        if (m) asin = m[1];
-      }
       if (title || asin) items.push({ asin, title, quantity: qty, price });
     });
 
@@ -294,6 +306,140 @@ async function readDefaults(page) {
     if (m1) cardLast4 = m1[1];
     return { address: addr, card_last4: cardLast4 };
   });
+}
+
+// Order-history card parsing, shared by history-sync and the checkout
+// confirmation fallback. Handles both modern and legacy DOM shapes.
+async function parseOrderCards(page, sourceTag) {
+  return await page.evaluate((src) => {
+    function text(el) { return (el && (el.innerText || el.textContent) || "").replace(/\s+/g, " ").trim(); }
+    function findHeaderValue(card, captionRegex) {
+      const lis = card.querySelectorAll("li.order-header__header-list-item, [class*='order-header']");
+      for (const li of lis) {
+        const cap = li.querySelector(".a-color-secondary.a-text-caps") || li.querySelector(".a-row.a-size-mini");
+        if (cap && captionRegex.test(text(cap))) {
+          const rows = li.querySelectorAll(".a-row");
+          for (const row of rows) {
+            const t = text(row);
+            if (t && !captionRegex.test(t) && !row.querySelector(".a-color-secondary.a-text-caps")) {
+              return t;
+            }
+          }
+        }
+      }
+      // Modern shape: look for label/value spans.
+      const labels = card.querySelectorAll(".a-size-mini.a-color-secondary, [class*='date-label']");
+      for (const lbl of labels) {
+        if (captionRegex.test(text(lbl))) {
+          const sibling = lbl.parentElement?.querySelector(".a-size-base, [class*='value']");
+          if (sibling && sibling !== lbl) {
+            const t = text(sibling);
+            if (t) return t;
+          }
+        }
+      }
+      return "";
+    }
+    const out = [];
+    // Match BOTH legacy (.order-card) AND modern card shells (after hydration).
+    const cards = document.querySelectorAll(".order-card, [data-component='order-card'], [data-yo-orders-order-id]");
+    cards.forEach((card) => {
+      // Skip skeleton placeholders.
+      if (card.querySelector("[class*='Skeleton']") && !card.querySelector("a[href*='/dp/'], a[href*='/gp/product/']")) {
+        return;
+      }
+      const idText = text(card.querySelector(".yohtmlc-order-id, [class*='order-id'], bdi"));
+      const dataOrderId = card.getAttribute && card.getAttribute("data-yo-orders-order-id");
+      const idMatch = (dataOrderId || idText).match(/(\d{3}-\d{7}-\d{7})/);
+      const orderId = idMatch ? idMatch[1] : "";
+      const placedAt = findHeaderValue(card, /Order\s*placed|placed/i);
+      const total = findHeaderValue(card, /^Total$/i);
+      const items = [];
+      const seenAsins = new Set();
+      const itemContainers = card.querySelectorAll(".a-fixed-left-grid, .item-box, .yohtmlc-item, [class*='product-image-container']");
+      itemContainers.forEach((row) => {
+        const link = row.querySelector("a[href*='/dp/'], a[href*='/gp/product/']");
+        if (!link) return;
+        const href = link.getAttribute("href") || link.href || "";
+        const m = href.match(/\/(?:gp\/product|dp)\/([A-Z0-9]{10})/);
+        const asin = m ? m[1] : "";
+        if (!asin || seenAsins.has(asin)) return;
+        seenAsins.add(asin);
+        let title = "";
+        row.querySelectorAll("a").forEach((a) => {
+          if (!title) {
+            const t = text(a);
+            if (t && t.length > 3) title = t;
+          }
+        });
+        items.push({ asin, title, quantity: 1 });
+      });
+      if (orderId) out.push({ order_id: orderId, placed_at: placedAt, total, items, _source: src });
+    });
+    return out;
+  }, sourceTag);
+}
+
+async function waitForOrderCards(page) {
+  // The modern /your-orders page renders ~1100 skeleton placeholders, then
+  // JS replaces them with real cards. Wait for either real cards to appear
+  // or the skeleton count to drop to ~zero.
+  try {
+    await page.waitForFunction(() => {
+      const hasRealCard = !!document.querySelector(".order-card a[href*='/dp/'], [data-component='order-card'] a[href*='/dp/'], [data-yo-orders-order-id]");
+      const skeletons = document.querySelectorAll("[class*='Skeleton']").length;
+      return hasRealCard || skeletons < 10;
+    }, { timeout: 30000 });
+  } catch (e) { /* fall through with whatever we have */ }
+  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(1500);
+}
+
+// Read every order number off the thank-you page. Amazon splits one checkout
+// into several orders (different sellers or ship dates) and the page then
+// lists each one. The URL's purchaseId has the same ###-#######-####### shape
+// but is NOT an order number, so it is dropped. The page hydrates late, so
+// poll briefly before giving up.
+async function readConfirmation(page) {
+  const deadline = Date.now() + 15000;
+  for (;;) {
+    const res = await page.evaluate(() => {
+      const url = window.location.href;
+      let purchaseId = "";
+      try { purchaseId = new URL(url).searchParams.get("purchaseId") || ""; } catch (e) { /* keep empty */ }
+      const ids = new Set();
+      document.querySelectorAll("a[href]").forEach((a) => {
+        const m = (a.getAttribute("href") || "").match(/order_?id=(\d{3}-\d{7}-\d{7})/i);
+        if (m) ids.add(m[1]);
+      });
+      const body = (document.body && document.body.innerText) || "";
+      for (const m of body.matchAll(/\b(\d{3}-\d{7}-\d{7})\b/g)) ids.add(m[1]);
+      if (purchaseId) ids.delete(purchaseId);
+      return { order_ids: [...ids], purchase_id: purchaseId, url };
+    });
+    if (res.order_ids.length || Date.now() > deadline) return res;
+    await page.waitForTimeout(1500);
+  }
+}
+
+// Fallback when the thank-you page shows no order numbers: open order history
+// and take today's orders that contain an ASIN from the cart we just bought.
+async function findPlacedOrders(page, asins) {
+  if (!asins.length) return [];
+  try {
+    await page.goto("https://www.amazon.com/your-orders/orders", { waitUntil: "domcontentloaded", timeout: 60000 });
+  } catch (e) {
+    process.stderr.write(`order-history fallback navigation failed: ${e.message}\n`);
+    return [];
+  }
+  await waitForOrderCards(page);
+  const orders = await parseOrderCards(page, "checkout-fallback").catch(() => []);
+  const today = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", month: "long", day: "numeric", year: "numeric" });
+  const want = new Set(asins);
+  return orders
+    .filter((o) => (o.placed_at || "").includes(today))
+    .filter((o) => (o.items || []).some((it) => want.has(it.asin)))
+    .map((o) => o.order_id);
 }
 
 async function main() {
@@ -338,92 +484,8 @@ async function main() {
       : defaultYears;
     process.stderr.write(`history-sync walking years: ${years.join(", ")}\n`);
 
-    const parseOrdersFromPage = async (sourceTag) => {
-      // Returns array of orders parsed from current page. Handles both modern
-      // and legacy DOM shapes.
-      return await page.evaluate((src) => {
-        function text(el) { return (el && (el.innerText || el.textContent) || "").replace(/\s+/g, " ").trim(); }
-        function findHeaderValue(card, captionRegex) {
-          const lis = card.querySelectorAll("li.order-header__header-list-item, [class*='order-header']");
-          for (const li of lis) {
-            const cap = li.querySelector(".a-color-secondary.a-text-caps") || li.querySelector(".a-row.a-size-mini");
-            if (cap && captionRegex.test(text(cap))) {
-              const rows = li.querySelectorAll(".a-row");
-              for (const row of rows) {
-                const t = text(row);
-                if (t && !captionRegex.test(t) && !row.querySelector(".a-color-secondary.a-text-caps")) {
-                  return t;
-                }
-              }
-            }
-          }
-          // Modern shape: look for label/value spans.
-          const labels = card.querySelectorAll(".a-size-mini.a-color-secondary, [class*='date-label']");
-          for (const lbl of labels) {
-            if (captionRegex.test(text(lbl))) {
-              const sibling = lbl.parentElement?.querySelector(".a-size-base, [class*='value']");
-              if (sibling && sibling !== lbl) {
-                const t = text(sibling);
-                if (t) return t;
-              }
-            }
-          }
-          return "";
-        }
-        const out = [];
-        // Match BOTH legacy (.order-card) AND modern card shells (after hydration).
-        const cards = document.querySelectorAll(".order-card, [data-component='order-card'], [data-yo-orders-order-id]");
-        cards.forEach((card) => {
-          // Skip skeleton placeholders.
-          if (card.querySelector("[class*='Skeleton']") && !card.querySelector("a[href*='/dp/'], a[href*='/gp/product/']")) {
-            return;
-          }
-          const idText = text(card.querySelector(".yohtmlc-order-id, [class*='order-id'], bdi"));
-          const dataOrderId = card.getAttribute && card.getAttribute("data-yo-orders-order-id");
-          const idMatch = (dataOrderId || idText).match(/(\d{3}-\d{7}-\d{7})/);
-          const orderId = idMatch ? idMatch[1] : "";
-          const placedAt = findHeaderValue(card, /Order\s*placed|placed/i);
-          const total = findHeaderValue(card, /^Total$/i);
-          const items = [];
-          const seenAsins = new Set();
-          const itemContainers = card.querySelectorAll(".a-fixed-left-grid, .item-box, .yohtmlc-item, [class*='product-image-container']");
-          itemContainers.forEach((row) => {
-            const link = row.querySelector("a[href*='/dp/'], a[href*='/gp/product/']");
-            if (!link) return;
-            const href = link.getAttribute("href") || link.href || "";
-            const m = href.match(/\/(?:gp\/product|dp)\/([A-Z0-9]{10})/);
-            const asin = m ? m[1] : "";
-            if (!asin || seenAsins.has(asin)) return;
-            seenAsins.add(asin);
-            let title = "";
-            row.querySelectorAll("a").forEach((a) => {
-              if (!title) {
-                const t = text(a);
-                if (t && t.length > 3) title = t;
-              }
-            });
-            items.push({ asin, title, quantity: 1 });
-          });
-          if (orderId) out.push({ order_id: orderId, placed_at: placedAt, total, items, _source: src });
-        });
-        return out;
-      }, sourceTag);
-    };
-
-    const waitForOrdersToHydrate = async () => {
-      // The modern /your-orders page renders ~1100 skeleton placeholders, then
-      // JS replaces them with real cards. Wait for either real cards to appear
-      // or the skeleton count to drop to ~zero.
-      try {
-        await page.waitForFunction(() => {
-          const hasRealCard = !!document.querySelector(".order-card a[href*='/dp/'], [data-component='order-card'] a[href*='/dp/'], [data-yo-orders-order-id]");
-          const skeletons = document.querySelectorAll("[class*='Skeleton']").length;
-          return hasRealCard || skeletons < 10;
-        }, { timeout: 30000 });
-      } catch (e) { /* fall through with whatever we have */ }
-      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
-      await page.waitForTimeout(1500);
-    };
+    const parseOrdersFromPage = (src) => parseOrderCards(page, src);
+    const waitForOrdersToHydrate = () => waitForOrderCards(page);
 
     const allOrders = [];
 
@@ -857,19 +919,23 @@ async function main() {
     manualExit(gate.kind, gate.deeplink, { stage: "post-place" });
   }
 
-  // Extract the order ID from the confirmation page.
-  const confirmation = await page.evaluate(() => {
-    const bodyText = document.body.innerText || "";
-    const m = bodyText.match(/(\d{3}-\d{7}-\d{7})/);
-    return { order_id: m ? m[1] : "", url: window.location.href };
-  });
+  // Extract the order ID(s) from the confirmation page.
+  const confirmation = await readConfirmation(page);
+  let orderIds = confirmation.order_ids;
+  let orderIdsSource = "confirmation_page";
+  if (!orderIds.length) {
+    const asins = [...new Set((previewCart.items.length ? previewCart.items : cart.items).map((i) => i.asin).filter(Boolean))];
+    orderIds = await findPlacedOrders(page, asins);
+    orderIdsSource = "order_history";
+  }
 
-  if (!confirmation.order_id) {
-    // We placed the order but didn't see a confirmation marker — return the URL
-    // so the agent can show the user the page.
+  if (!orderIds.length) {
+    // We placed the order but couldn't find an order number anywhere — return
+    // the URL and purchase ID so the agent can verify by hand.
     process.stdout.write(JSON.stringify({
       status: "placed_unconfirmed",
       confirmation_url: confirmation.url,
+      purchase_id: confirmation.purchase_id || undefined,
     }) + "\n");
     await browser.close();
     process.exit(0);
@@ -877,7 +943,10 @@ async function main() {
 
   process.stdout.write(JSON.stringify({
     status: "placed",
-    order_id: confirmation.order_id,
+    order_id: orderIds[0],
+    order_ids: orderIds,
+    order_ids_source: orderIdsSource,
+    purchase_id: confirmation.purchase_id || undefined,
     confirmation_url: confirmation.url,
     default_address: reviewDefaults.address || defaults.address,
     default_card_last4: reviewDefaults.card_last4 || defaults.card_last4,

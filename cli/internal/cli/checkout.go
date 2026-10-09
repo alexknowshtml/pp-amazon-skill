@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -55,7 +56,11 @@ the agent can hand the user back to her browser for the final tap.`,
 					fmt.Fprintln(cmd.OutOrStdout(), "Order review reached (dry-run). Re-run with --yes to place.")
 					fmt.Fprint(cmd.OutOrStdout(), formatBrowserCart(res))
 				case "placed":
-					fmt.Fprintf(cmd.OutOrStdout(), "ORDER PLACED: %s\n", res.OrderID)
+					ids := res.OrderIDs
+					if len(ids) == 0 {
+						ids = []string{res.OrderID}
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "ORDER PLACED: %s\n", strings.Join(ids, ", "))
 				case "placed_unconfirmed":
 					fmt.Fprintf(cmd.OutOrStdout(), "place-order POST returned but no order ID parsed; check %s\n", res.ConfirmationURL)
 				default:
