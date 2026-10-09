@@ -18,3 +18,6 @@ cookies.json
 history.db
 *.bak
 *.bak-*
+
+# Scrubbed captures of real pages still list purchases; keep them local
+test/fixtures/

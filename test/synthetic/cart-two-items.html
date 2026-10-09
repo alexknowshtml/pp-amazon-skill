@@ -1,0 +1,22 @@
+<!-- Hand-built cart page. Mirrors the Oct 2026 row shape: one outer
+     [data-asin] row per item under #sc-active-cart, with nested [data-asin]
+     widgets (add-ons, "compare similar") that must not leak into the row. -->
+<html><body>
+<div id="nav-link-accountList-nav-line-1">Hello, Test</div>
+<div id="sc-active-cart">
+  <div data-asin="B0ENVELOPE" data-quantity="2" data-price="12.49" data-itemtype="active">
+    <div data-asin="B0TORKTOWL" data-quantity="1"><a href="/dp/B0TORKTOWL">Tork Paper Towels (add-on)</a></div>
+    <a href="/dp/B0ENVELOPE"><span class="sc-product-title">Mead #10 Envelopes Mead #10 Envelopes</span></a>
+    <input data-action="delete" value="Delete">
+  </div>
+  <div data-asin="B0MARKERSX" data-quantity="1" data-price="8.00" data-itemtype="active">
+    <a href="/gp/product/B0MARKERSX"><span class="sc-product-title">EXPO Dry Erase Markers</span></a>
+    <select name="quantity.1"><option value="1" selected>1</option></select>
+  </div>
+</div>
+<div id="sc-subtotal-amount-buybox">$32.98</div>
+<h2>Saved for later (1 item)</h2>
+<div class="sc-list-item" data-asin="B0SAVEDXXX" data-quantity="1">
+  <a href="/dp/B0SAVEDXXX">Saved thing</a><input data-action="delete" value="Delete">
+</div>
+</body></html>

@@ -7,5 +7,8 @@
   "main": "amazon-checkout.mjs",
   "dependencies": {
     "playwright": "1.60.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
   }
 }
