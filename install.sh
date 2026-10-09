@@ -66,13 +66,15 @@ if [ ! -w "$(dirname "$HELPER_DIR")" ]; then
   sudo cp "$SCRIPT_DIR/amazon-checkout.mjs" "$HELPER_DIR/amazon-checkout.mjs"
   sudo chmod +x "$HELPER_DIR/amazon-checkout.mjs"
   sudo cp "$SCRIPT_DIR/package.json" "$HELPER_DIR/package.json"
-  cd "$HELPER_DIR" && sudo npm install playwright --no-audit --no-fund
+  sudo rm -rf "$HELPER_DIR/lib" && sudo cp -r "$SCRIPT_DIR/lib" "$HELPER_DIR/lib"
+  cd "$HELPER_DIR" && sudo npm install --no-audit --no-fund
 else
   mkdir -p "$HELPER_DIR"
   cp "$SCRIPT_DIR/amazon-checkout.mjs" "$HELPER_DIR/amazon-checkout.mjs"
   chmod +x "$HELPER_DIR/amazon-checkout.mjs"
   cp "$SCRIPT_DIR/package.json" "$HELPER_DIR/package.json"
-  cd "$HELPER_DIR" && npm install playwright --no-audit --no-fund
+  rm -rf "$HELPER_DIR/lib" && cp -r "$SCRIPT_DIR/lib" "$HELPER_DIR/lib"
+  cd "$HELPER_DIR" && npm install --no-audit --no-fund
 fi
 echo "    Helper installed."
 
