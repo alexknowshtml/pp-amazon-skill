@@ -48,10 +48,13 @@ the agent can hand the user back to her browser for the final tap.`,
 					}
 					return herr
 				}
+				writeParseWarnings(cmd.ErrOrStderr(), res)
 				if app.JSON {
 					return json.NewEncoder(cmd.OutOrStdout()).Encode(res)
 				}
 				switch res.Status {
+				case "parse_blocked":
+					fmt.Fprintln(cmd.OutOrStdout(), "NOT PLACED: the cart page could not be read reliably. Fix the parser, then retry.")
 				case "review_ready":
 					fmt.Fprintln(cmd.OutOrStdout(), "Order review reached (dry-run). Re-run with --yes to place.")
 					fmt.Fprint(cmd.OutOrStdout(), formatBrowserCart(res))

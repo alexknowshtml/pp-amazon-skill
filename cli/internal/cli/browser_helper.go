@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -37,7 +38,7 @@ func browserHelperPath() (string, error) {
 
 // BrowserResult is the JSON contract emitted by amazon-checkout.mjs on stdout.
 type BrowserResult struct {
-	Status           string        `json:"status"` // ok | review_ready | placed | placed_unconfirmed | manual_required | added | add_failed
+	Status           string        `json:"status"` // ok | review_ready | placed | placed_unconfirmed | parse_blocked | manual_required | added | add_failed
 	Kind             string        `json:"kind,omitempty"`
 	Deeplink         string        `json:"deeplink,omitempty"`
 	Stage            string        `json:"stage,omitempty"`
@@ -60,9 +61,38 @@ type BrowserResult struct {
 	CartItems        int    `json:"cart_items,omitempty"`
 	WasAlreadyInCart bool   `json:"was_already_in_cart,omitempty"`
 	Reason           string `json:"reason,omitempty"`
+	// Set when a parser result disagrees with the page (Amazon changed its
+	// markup). BrokenPageCapture is the saved page to fix the parser against.
+	ParseWarnings     []ParseWarning `json:"parse_warnings,omitempty"`
+	BrokenPageCapture string         `json:"broken_page_capture,omitempty"`
 	// history-sync fields
 	OrdersCount int    `json:"orders_count,omitempty"`
 	JSONL       string `json:"jsonl,omitempty"`
+}
+
+type ParseWarning struct {
+	Code   string `json:"code"`
+	Detail string `json:"detail"`
+	Page   string `json:"page,omitempty"`
+}
+
+// writeParseWarnings prints one PARSE WARNING line per warning, so a broken
+// parser is loud in both text and --json mode (stderr either way).
+func writeParseWarnings(w io.Writer, r *BrowserResult) {
+	if r == nil || len(r.ParseWarnings) == 0 {
+		return
+	}
+	for _, pw := range r.ParseWarnings {
+		where := ""
+		if pw.Page != "" {
+			where = " [" + pw.Page + "]"
+		}
+		fmt.Fprintf(w, "PARSE WARNING %s%s: %s\n", pw.Code, where, pw.Detail)
+	}
+	if r.BrokenPageCapture != "" {
+		fmt.Fprintf(w, "PARSE WARNING page saved: %s\n", r.BrokenPageCapture)
+	}
+	fmt.Fprintln(w, "PARSE WARNING Amazon's page layout may have changed; these results may be incomplete.")
 }
 
 type BrowserItem struct {

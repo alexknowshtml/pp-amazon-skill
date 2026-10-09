@@ -68,8 +68,13 @@ the caller can hand the user back to their browser.`,
 						res.DefaultAddress = d.AddressLabel
 					}
 				}
+				writeParseWarnings(cmd.ErrOrStderr(), res)
 				if app.JSON {
 					return json.NewEncoder(cmd.OutOrStdout()).Encode(res)
+				}
+				if len(res.Items) == 0 && len(res.ParseWarnings) > 0 {
+					fmt.Fprintln(cmd.OutOrStdout(), "(could not read the cart; see PARSE WARNING)")
+					return nil
 				}
 				if len(res.Items) == 0 {
 					fmt.Fprintln(cmd.OutOrStdout(), "(cart is empty)")

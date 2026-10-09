@@ -60,6 +60,7 @@ Exits 9 (manual) with a deeplink if Amazon shows a CAPTCHA / sign-in challenge.`
 				}
 				return herr
 			}
+			writeParseWarnings(cmd.ErrOrStderr(), res)
 			if res == nil || res.JSONL == "" {
 				if app.JSON {
 					return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"imported_orders": 0, "imported_items": 0})

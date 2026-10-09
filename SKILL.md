@@ -65,6 +65,8 @@ When the user says "order X" or equivalent, you MUST run this sequence:
 
    **DO NOT speculate about missing cart contents.** If subtotal seems higher than `sum(items × ~unit-price)` OR any item's `quantity = -1` (unknown), say honestly: *"Cart shows N row(s), subtotal $X — qty parser may have undercounted. Want me to dump raw?"* NEVER reintroduce items from earlier turns as "hidden cart items."
 
+   **If the JSON has `parse_warnings`:** stop and follow "When Amazon changes its pages" below.
+
    **If `cart show` exits 9 (`manual_required`):** Amazon hit a CAPTCHA or sign-in gate. Skip steps 6–8. Tell the user: *"Amazon needs you to finish at <deeplink from JSON>."* Don't retry programmatically.
 
 6. **Ask for placement confirmation.** "Ready to place this on [personal/work]? Total $X — charging ····[last4]."
@@ -89,6 +91,20 @@ When the user says "order X" or equivalent, you MUST run this sequence:
 - Never bundle confirmations. "Yes order paper towels and place it" does not count as both step-3 and step-7 — you must show the cart and ask again.
 - If `checkout --yes` returns exit 7 (transient), re-run `cart show` and ask for a fresh yes before retrying. Original consent attaches to the original cart state.
 - **If a prior turn in this session returned exit 127 ("command not found") but the binary is now installed (e.g. fresh install), retry `which amazon-pp-cli` once before declaring missing.**
+
+## When Amazon changes its pages (PARSE WARNING)
+
+Amazon changes its page markup without notice. The helper checks every cart and order-history read against what the page itself says. When they disagree, it adds `parse_warnings` (and `broken_page_capture`, the saved page) to the JSON and prints `PARSE WARNING` lines on stderr. Example: 0 items parsed but the page never says the cart is empty.
+
+- **Say so right away.** Tell the user which command, which warning codes, and that results may be incomplete. Never present a warned result as fact. Never report a warned empty cart as "your cart is empty".
+- **`checkout --yes` refuses to place an order** when the cart read has warnings (`status: "parse_blocked"`). Nothing was ordered. Don't retry until the parser is fixed and `cart show` is clean.
+- **Then fix it** (needs this repo checked out):
+  1. Read `broken_page_capture`. Find what the parser in `lib/cart.mjs` or `lib/orders.mjs` misses.
+  2. Scrub the capture into a fixture: `node tools/scrub-fixture.mjs <capture> test/fixtures/<name>.html --pii "<name>,<street>"`. Fixtures stay local (gitignored).
+  3. Add a test for the new shape in `test/parsers.test.mjs`. Prefer a small hand-built page in `test/synthetic/` that mirrors the new markup, since that one can be committed.
+  4. Fix the parser, keeping the old shapes working. `npm test` must pass.
+  5. Re-run the original command live and confirm no warning. Then reinstall the helper (`./install.sh`).
+- Fresh pages for comparison: `node tools/capture-pages.mjs <cookies.json> <private-dir> [cart|orders]` (loads pages only, never clicks).
 
 ## Keeping history current
 

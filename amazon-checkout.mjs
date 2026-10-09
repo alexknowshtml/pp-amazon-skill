@@ -22,6 +22,7 @@ import path from "node:path";
 import { launchSession, detectManualGate, manualExit, transientExit } from "./lib/browser.mjs";
 import { readCart, readDefaults } from "./lib/cart.mjs";
 import { parseOrderCards, waitForOrderCards, readConfirmation, findPlacedOrders } from "./lib/orders.mjs";
+import { checkCart, checkOrders, captureBrokenPage } from "./lib/health.mjs";
 
 const [, , action, cookiesPath, ...rest] = process.argv;
 const wantPlace = rest.includes("--place-order");
@@ -92,6 +93,8 @@ async function main() {
     const waitForOrdersToHydrate = () => waitForOrderCards(page);
 
     const allOrders = [];
+    const parseWarnings = [];
+    let brokenCapture = "";
 
     for (const year of years) {
       const url = `https://www.amazon.com/your-orders/orders?timeFilter=year-${year}`;
@@ -113,6 +116,11 @@ async function main() {
         const got = await parseOrdersFromPage(`modern-year-${year}-p${pageNum}`);
         process.stderr.write(`  page ${pageNum}: ${got.length} orders\n`);
         allOrders.push(...got);
+        const warns = await checkOrders(page, got);
+        if (warns.length) {
+          parseWarnings.push(...warns.map((w) => ({ ...w, page: `year-${year}-p${pageNum}` })));
+          if (!brokenCapture) brokenCapture = await captureBrokenPage(page, cookiesPath, "orders");
+        }
         // Find next page link (modern pagination)
         const nextLink = await page.$(
           "ul.a-pagination li.a-last:not(.a-disabled) a, " +
@@ -159,6 +167,8 @@ async function main() {
       status: "ok",
       orders_count: uniq.length,
       years_walked: years,
+      parse_warnings: parseWarnings.length ? parseWarnings : undefined,
+      broken_page_capture: brokenCapture || undefined,
       jsonl: uniq.map((o) => JSON.stringify(o)).join("\n"),
     }) + "\n");
     await browser.close();
@@ -191,6 +201,11 @@ async function main() {
 
   const cart = await readCart(page);
   const defaults = await readDefaults(page);
+  const cartWarnings = await checkCart(page, cart);
+  const cartCapture = cartWarnings.length ? await captureBrokenPage(page, cookiesPath, "cart") : "";
+  const cartHealth = cartWarnings.length
+    ? { parse_warnings: cartWarnings, broken_page_capture: cartCapture || undefined }
+    : {};
 
   if (action === "cart-show") {
     process.stdout.write(JSON.stringify({
@@ -199,6 +214,7 @@ async function main() {
       subtotal: cart.subtotal,
       default_address: defaults.address,
       default_card_last4: defaults.card_last4,
+      ...cartHealth,
     }) + "\n");
     await browser.close();
     process.exit(0);
@@ -375,6 +391,19 @@ async function main() {
   }
 
   // action === "checkout"
+  // Never place an order from a cart we could not read properly: the agent
+  // would be confirming items it never saw.
+  if (wantPlace && cartWarnings.length) {
+    process.stdout.write(JSON.stringify({
+      status: "parse_blocked",
+      items: cart.items,
+      subtotal: cart.subtotal,
+      ...cartHealth,
+    }) + "\n");
+    await browser.close();
+    process.exit(0);
+  }
+
   // Click "Proceed to checkout" to reach order review. Amazon's cart DOM
   // changes frequently; try selector- and role-based locators in order, and
   // fall back to navigating directly to the SPC URL (works when the button is
@@ -487,6 +516,7 @@ async function main() {
       default_address: reviewDefaults.address || defaults.address,
       default_card_last4: reviewDefaults.card_last4 || defaults.card_last4,
       review_url: page.url(),
+      ...cartHealth,
     }) + "\n");
     await browser.close();
     process.exit(0);
