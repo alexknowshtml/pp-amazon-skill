@@ -19,6 +19,7 @@
 import { chromium } from "playwright";
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 
 const [, , action, cookiesPath, ...rest] = process.argv;
 const wantPlace = rest.includes("--place-order");
@@ -424,22 +425,50 @@ async function readConfirmation(page) {
 
 // Fallback when the thank-you page shows no order numbers: open order history
 // and take today's orders that contain an ASIN from the cart we just bought.
+// Order history demands a sign-in within the last hour (max_auth_age=3600),
+// so a stale session lands on /ap/signin. Report that as its own outcome
+// instead of an empty list, so the caller knows the check never ran.
 async function findPlacedOrders(page, asins) {
-  if (!asins.length) return [];
+  if (!asins.length) return { ids: [], history_check: "no_asins" };
   try {
     await page.goto("https://www.amazon.com/your-orders/orders", { waitUntil: "domcontentloaded", timeout: 60000 });
   } catch (e) {
     process.stderr.write(`order-history fallback navigation failed: ${e.message}\n`);
-    return [];
+    return { ids: [], history_check: "navigation_failed" };
   }
+  const gate = await detectManualGate(page);
+  if (gate) return { ids: [], history_check: `blocked_${gate.kind}` };
   await waitForOrderCards(page);
   const orders = await parseOrderCards(page, "checkout-fallback").catch(() => []);
   const today = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", month: "long", day: "numeric", year: "numeric" });
   const want = new Set(asins);
-  return orders
+  const ids = orders
     .filter((o) => (o.placed_at || "").includes(today))
     .filter((o) => (o.items || []).some((it) => want.has(it.asin)))
     .map((o) => o.order_id);
+  return { ids, history_check: ids.length ? "found" : (orders.length ? "no_match" : "no_orders_parsed") };
+}
+
+// Save the thank-you page HTML when it showed no order numbers, so the next
+// parser fix works from the real page instead of a guess. Lives next to the
+// profile's cookies (0700 dir), file mode 0600, pruned after 7 days because
+// the page includes the shipping address.
+async function captureThankYou(page) {
+  try {
+    const dir = path.join(path.dirname(cookiesPath), "captures");
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
+    for (const f of fs.readdirSync(dir)) {
+      const fp = path.join(dir, f);
+      if (f.startsWith("thankyou-") && fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
+    }
+    const file = path.join(dir, `thankyou-${new Date().toISOString().replace(/[:.]/g, "-")}.html`);
+    fs.writeFileSync(file, `<!-- ${page.url()} -->\n` + (await page.content()), { mode: 0o600 });
+    return file;
+  } catch (e) {
+    process.stderr.write(`thank-you capture failed: ${e.message}\n`);
+    return "";
+  }
 }
 
 async function main() {
@@ -923,9 +952,15 @@ async function main() {
   const confirmation = await readConfirmation(page);
   let orderIds = confirmation.order_ids;
   let orderIdsSource = "confirmation_page";
+  let capturePath = "";
+  let historyCheck = "";
   if (!orderIds.length) {
+    // Capture BEFORE navigating away to order history.
+    capturePath = await captureThankYou(page);
     const asins = [...new Set((previewCart.items.length ? previewCart.items : cart.items).map((i) => i.asin).filter(Boolean))];
-    orderIds = await findPlacedOrders(page, asins);
+    const found = await findPlacedOrders(page, asins);
+    orderIds = found.ids;
+    historyCheck = found.history_check;
     orderIdsSource = "order_history";
   }
 
@@ -936,6 +971,8 @@ async function main() {
       status: "placed_unconfirmed",
       confirmation_url: confirmation.url,
       purchase_id: confirmation.purchase_id || undefined,
+      history_check: historyCheck || undefined,
+      capture_path: capturePath || undefined,
     }) + "\n");
     await browser.close();
     process.exit(0);
@@ -946,6 +983,7 @@ async function main() {
     order_id: orderIds[0],
     order_ids: orderIds,
     order_ids_source: orderIdsSource,
+    capture_path: capturePath || undefined,
     purchase_id: confirmation.purchase_id || undefined,
     confirmation_url: confirmation.url,
     default_address: reviewDefaults.address || defaults.address,

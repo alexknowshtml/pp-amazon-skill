@@ -63,6 +63,12 @@ the agent can hand the user back to her browser for the final tap.`,
 					fmt.Fprintf(cmd.OutOrStdout(), "ORDER PLACED: %s\n", strings.Join(ids, ", "))
 				case "placed_unconfirmed":
 					fmt.Fprintf(cmd.OutOrStdout(), "place-order POST returned but no order ID parsed; check %s\n", res.ConfirmationURL)
+					if res.HistoryCheck != "" {
+						fmt.Fprintf(cmd.OutOrStdout(), "order-history check: %s\n", res.HistoryCheck)
+					}
+					if res.CapturePath != "" {
+						fmt.Fprintf(cmd.OutOrStdout(), "thank-you page saved: %s\n", res.CapturePath)
+					}
 				default:
 					fmt.Fprintf(cmd.OutOrStdout(), "status=%s\n", res.Status)
 				}

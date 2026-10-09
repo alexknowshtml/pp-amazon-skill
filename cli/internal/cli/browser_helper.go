@@ -45,6 +45,8 @@ type BrowserResult struct {
 	OrderIDs         []string      `json:"order_ids,omitempty"`        // every order from one checkout (Amazon may split it)
 	OrderIDsSource   string        `json:"order_ids_source,omitempty"` // confirmation_page | order_history
 	PurchaseID       string        `json:"purchase_id,omitempty"`      // thank-you URL purchaseId; not an order number
+	HistoryCheck     string        `json:"history_check,omitempty"`    // order-history fallback outcome: found | no_match | blocked_sign-in | ...
+	CapturePath      string        `json:"capture_path,omitempty"`     // saved thank-you HTML when it showed no order numbers
 	ConfirmationURL  string        `json:"confirmation_url,omitempty"`
 	ReviewURL        string        `json:"review_url,omitempty"`
 	Items            []BrowserItem `json:"items,omitempty"`
