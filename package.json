@@ -6,6 +6,6 @@
   "description": "Playwright-driven helper for amazon-pp-cli (cart show, add to cart, checkout, history sync).",
   "main": "amazon-checkout.mjs",
   "dependencies": {
-    "playwright": "^1.60.0"
+    "playwright": "1.60.0"
   }
 }
