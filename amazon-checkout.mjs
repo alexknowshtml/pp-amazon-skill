@@ -339,19 +339,33 @@ async function parseOrderCards(page, sourceTag) {
           }
         }
       }
+      // Oct 2026 shape: #orderCardHeader .a-column, each holding a label
+      // row ("Order placed") and a value row ("October 9, 2026").
+      for (const col of card.querySelectorAll("#orderCardHeader .a-column")) {
+        const rows = col.querySelectorAll(".a-row");
+        if (rows.length >= 2 && captionRegex.test(text(rows[0]))) {
+          const t = text(rows[1]);
+          if (t) return t;
+        }
+      }
       return "";
     }
     const out = [];
-    // Match BOTH legacy (.order-card) AND modern card shells (after hydration).
-    const cards = document.querySelectorAll(".order-card, [data-component='order-card'], [data-yo-orders-order-id]");
+    // Match legacy (.order-card), modern card shells (after hydration), and
+    // the Oct 2026 shape where each card is div#orderCard (id repeats per
+    // card). Keep only the outermost match so nested shells parse once.
+    const CARD_SEL = ".order-card, [data-component='order-card'], [data-yo-orders-order-id], [id='orderCard']";
+    const cards = [...document.querySelectorAll(CARD_SEL)]
+      .filter((el) => !(el.parentElement && el.parentElement.closest(CARD_SEL)));
     cards.forEach((card) => {
       // Skip skeleton placeholders.
       if (card.querySelector("[class*='Skeleton']") && !card.querySelector("a[href*='/dp/'], a[href*='/gp/product/']")) {
         return;
       }
-      const idText = text(card.querySelector(".yohtmlc-order-id, [class*='order-id'], bdi"));
+      const idText = text(card.querySelector("#orderIdField, .yohtmlc-order-id, [class*='order-id'], bdi"));
       const dataOrderId = card.getAttribute && card.getAttribute("data-yo-orders-order-id");
-      const idMatch = (dataOrderId || idText).match(/(\d{3}-\d{7}-\d{7})/);
+      const detailHref = card.querySelector("a[href*='order-details?orderID=']")?.getAttribute("href") || "";
+      const idMatch = (dataOrderId || idText || detailHref).match(/(\d{3}-\d{7}-\d{7})/);
       const orderId = idMatch ? idMatch[1] : "";
       const placedAt = findHeaderValue(card, /Order\s*placed|placed/i);
       const total = findHeaderValue(card, /^Total$/i);
@@ -375,6 +389,20 @@ async function parseOrderCards(page, sourceTag) {
         });
         items.push({ asin, title, quantity: 1 });
       });
+      if (!items.length) {
+        // Oct 2026 shape has no per-item grid wrapper; read the product
+        // links directly. The image link carries a bare-number quantity
+        // badge ("2"); that is the quantity, never the title.
+        card.querySelectorAll("a[href*='/dp/'], a[href*='/gp/product/']").forEach((a) => {
+          const m = (a.getAttribute("href") || "").match(/\/(?:gp\/product|dp)\/([A-Z0-9]{10})/);
+          if (!m) return;
+          let item = items.find((it) => it.asin === m[1]);
+          if (!item) { item = { asin: m[1], title: "", quantity: 1 }; items.push(item); }
+          const t = text(a);
+          if (/^\d+$/.test(t)) item.quantity = parseInt(t, 10);
+          else if (t.length > item.title.length) item.title = t;
+        });
+      }
       if (orderId) out.push({ order_id: orderId, placed_at: placedAt, total, items, _source: src });
     });
     return out;
@@ -387,7 +415,7 @@ async function waitForOrderCards(page) {
   // or the skeleton count to drop to ~zero.
   try {
     await page.waitForFunction(() => {
-      const hasRealCard = !!document.querySelector(".order-card a[href*='/dp/'], [data-component='order-card'] a[href*='/dp/'], [data-yo-orders-order-id]");
+      const hasRealCard = !!document.querySelector(".order-card a[href*='/dp/'], [data-component='order-card'] a[href*='/dp/'], [data-yo-orders-order-id], [id='orderCard'] a[href*='/dp/']");
       const skeletons = document.querySelectorAll("[class*='Skeleton']").length;
       return hasRealCard || skeletons < 10;
     }, { timeout: 30000 });
